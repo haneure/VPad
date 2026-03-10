@@ -14,6 +14,13 @@ Core rule:
 - `packages/shared-protocol` shared wire protocol contracts
 - `src-tauri` Tauri desktop shell bootstrap
 
+## Contributor Docs
+
+- Development context and implementation behavior:
+  - `docs/DEVELOPMENT_GUIDE.md`
+- UI system and styling constraints:
+  - `docs/STYLING_GUIDE.md`
+
 ## Requirements
 
 - Node.js 20+
