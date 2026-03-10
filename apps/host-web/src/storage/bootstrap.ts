@@ -33,6 +33,7 @@ export function buildDefaultBootstrap(existingSettings?: Partial<Settings>) {
     publicHostOrigin: existingSettings?.publicHostOrigin || "",
     vtsHost: "localhost",
     vtsPort: 8001,
+    devMockVts: existingSettings?.devMockVts ?? false,
     schemaVersion: SCHEMA_VERSION,
     createdAt: timestamp,
     updatedAt: timestamp,

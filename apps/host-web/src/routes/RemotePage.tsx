@@ -115,17 +115,20 @@ export function RemotePage() {
   }
 
   return (
-    <div className="remote-root">
-      <header className="remote-header">
-        <div>
+    <div className="remote-root remote-theme">
+      <header className="remote-header remote-panel">
+        <div className="remote-title">
           <strong>VPad Remote</strong>
-          <div className="small">Session: {sessionId}</div>
+          <div className="small">Session {sessionId}</div>
         </div>
-        <div className="small">{status}</div>
+        <div className={`remote-status remote-status-${status}`}>
+          <span className="remote-status-dot" />
+          {formatStatus(status)}
+        </div>
       </header>
 
       {status !== "connected" ? (
-        <section className="remote-join card stack">
+        <section className="remote-join remote-panel stack">
           <strong>Connect Remote</strong>
           <div className="small">Relay: {resolvedRelayUrl}</div>
           <div className="row">
@@ -139,12 +142,13 @@ export function RemotePage() {
               Join
             </button>
           </div>
+          <div className="small">Tip: scanning QR auto-connects and skips manual code.</div>
           {error ? <div className="small">Error: {error}</div> : null}
         </section>
       ) : null}
 
-      <section className="remote-board">
-        <div className="remote-board-meta small">Devices: {connectedDeviceCount}</div>
+      <section className="remote-board remote-panel">
+        <div className="remote-board-meta small">Connected devices: {connectedDeviceCount}</div>
         <div className="remote-grid">
           {layout
             .slice()
@@ -159,11 +163,15 @@ export function RemotePage() {
                 onPointerCancel={() => releasePad(pad.id)}
                 disabled={!pad.enabled || status !== "connected"}
               >
-                <span>{pad.label}</span>
+                <span className="remote-pad-label">{pad.label}</span>
               </button>
             ))}
         </div>
       </section>
     </div>
   );
+}
+
+function formatStatus(status: string): string {
+  return status.charAt(0).toUpperCase() + status.slice(1);
 }

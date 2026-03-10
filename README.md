@@ -22,8 +22,6 @@ Core rule:
 
 ## General User Setup (Run From Source)
 
-This is for users who just want to use VPad locally.
-
 1. Install dependencies:
 
 ```bash
@@ -36,27 +34,50 @@ pnpm install
 pnpm dev:relay
 ```
 
-3. Start host app (Terminal 2):
+3. Start host app on LAN (Terminal 2):
 
 ```bash
 pnpm dev:host:lan
 ```
 
-4. Open host UI:
+4. Open host UI on your PC:
 - [http://localhost:5173/host](http://localhost:5173/host)
 
-5. In VPad host page:
-- Connect to VTube Studio (`localhost:8001` by default)
-- Authenticate once
-- Set **Public Host Origin** to your PC LAN address (example: `http://192.168.1.23:5173`)
-- Set **Public Relay URL** to your relay LAN address (example: `ws://192.168.1.23:8787`) if auto-derived value is not correct
-- Build pads in the soundboard
-- Enable Companion Mode
-- Scan QR from phone or open remote URL
+5. Configure VTube Studio section on host page:
+- **VTS Host**: `localhost`
+- **VTS Port**: `8001`
+- Click **Connect**
+- Fill **Plugin Name** (example: `VPad`) and **Plugin Developer** (your name/team)
+- Click **Authenticate** once
 
-Notes:
-- If you do not use phone companion mode, relay can stay off.
-- Sound playback in MVP is host-only (PC), not phone.
+6. Configure Companion Mode section:
+- Fill only IP/PORT (no protocol):
+  - **PC IP Address**: example `192.168.9.71`
+  - **Host Web Port**: `5173`
+  - **Relay Port**: `8787`
+- Click **Enable Companion Mode**
+- Use one of these:
+  - Scan QR from phone
+  - Open generated Remote URL on phone
+  - Click **Open Remote Preview** on PC
+
+## Current UX Behavior
+
+### Soundboard Dashboard
+- Tap pad to trigger action.
+- Hover top-right `⋯` on a pad to open menu:
+  - `Edit`
+  - `Delete`
+- Add/Edit uses a modal form.
+
+### Remote Page (Phone)
+- Focused control surface for pad triggering.
+- Join automatically from QR token, or manually with 6-digit code.
+
+### Host Notifications
+- When a remote pad is triggered, host shows snackbar with:
+  - pad label
+  - action details (hotkey/sound/multi summary)
 
 ## Developer Setup
 
@@ -74,7 +95,7 @@ pnpm dev
 
 `pnpm dev` is equivalent to `pnpm dev:host` and starts only the host app.
 
-3. For companion mode development, also run relay in another terminal:
+3. For companion mode development, run relay in another terminal:
 
 ```bash
 pnpm dev:relay
@@ -94,7 +115,7 @@ Build all workspaces:
 pnpm build
 ```
 
-Host production output is generated at:
+Host production output:
 - `apps/host-web/dist`
 
 ## Test and Quality
@@ -124,11 +145,22 @@ pnpm --filter @vpad/host-web test:e2e
 - `pnpm test` run workspace tests
 - `pnpm build` build workspace packages/apps
 
+## Troubleshooting
+
+### Phone cannot open remote URL
+
+Check these in order:
+1. Host app is actually running on `5173` (not auto-switched port).
+2. Host app is exposed on LAN (`pnpm dev:host:lan`).
+3. Phone and PC are on same network.
+4. Firewall allows inbound `5173` and `8787` on PC.
+5. Companion Mode fields use correct IP/ports.
+
 ## FAQ
 
 ### Do I just need to run `pnpm dev` to develop or test?
 
 - For host UI development only: `pnpm dev` is enough.
 - For companion mode (QR pairing + remote press events): run both `pnpm dev` and `pnpm dev:relay`.
-- For test runs: use `pnpm test` (not `pnpm dev`).
+- For tests: use `pnpm test`.
 - For lint/type checks: use `pnpm lint` and `pnpm typecheck`.

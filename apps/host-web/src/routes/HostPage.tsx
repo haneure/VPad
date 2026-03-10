@@ -10,7 +10,7 @@ import { RelayClient } from "../features/remote/relayClient";
 import { useRemoteStore } from "../features/remote/useRemoteStore";
 import { useSoundboardStore } from "../features/soundboard/useSoundboardStore";
 import { useVtsStore } from "../features/vts/useVtsStore";
-import { WebSocketVtsClient } from "../features/vts/vtsClient";
+import { MockVtsClient, WebSocketVtsClient } from "../features/vts/vtsClient";
 import { loadSnapshot, parseImport, saveSnapshot, serializeExport } from "../storage/repository";
 import { buildHostOrigin, buildRelayUrl, normalizeHostOrigin, normalizeRelayUrl, splitHostOriginForInput, splitRelayUrlForInput } from "../utils/network";
 import { nowIso } from "../utils/time";
@@ -22,6 +22,8 @@ export function HostPage() {
   const [pluginDeveloper, setPluginDeveloper] = useState("VPad");
   const [qrDataUrl, setQrDataUrl] = useState<string>();
   const [importError, setImportError] = useState<string>();
+  const [snackbars, setSnackbars] = useState<Array<{ id: string; title: string; body: string }>>([]);
+  const [openPadMenuId, setOpenPadMenuId] = useState<string | null>(null);
   const [padModalState, setPadModalState] = useState<
     | { mode: "create"; defaultPageId: string }
     | { mode: "edit"; padId: string }
@@ -29,11 +31,15 @@ export function HostPage() {
   >(null);
 
   const vts = useMemo(() => new WebSocketVtsClient(), []);
+  const mockVts = useMemo(() => new MockVtsClient(), []);
   const relay = useMemo(() => new RelayClient(), []);
   const soundPlayer = useMemo(() => new HostSoundPlayer(), []);
 
   const settings = useSettingsStore((state) => state.settings);
   const setSettings = useSettingsStore((state) => state.patchSettings);
+  const canUseDevMockVts = import.meta.env.DEV;
+  const useDevMockVts = canUseDevMockVts && Boolean(settings.devMockVts);
+  const activeVtsClient = useDevMockVts ? mockVts : vts;
 
   const profileId = useProfileStore((state) => state.activeProfileId);
   const pages = useSoundboardStore((state) => state.pages);
@@ -77,11 +83,13 @@ export function HostPage() {
 
   const executePad = useCallback(
     async (pad: TriggerPad) => {
+      if (!pad.enabled) return;
+      const runtimeVtsClient = vts.isConnected() ? vts : activeVtsClient;
       try {
         await executePadAction(
           pad,
           {
-            vtsClient: vts,
+            vtsClient: runtimeVtsClient,
             soundsById: {},
           },
           soundPlayer,
@@ -90,8 +98,17 @@ export function HostPage() {
         setVtsError(error instanceof Error ? error.message : "Action execution failed");
       }
     },
-    [setVtsError, soundPlayer, vts],
+    [activeVtsClient, setVtsError, soundPlayer, vts],
   );
+
+  const pushSnackbar = useCallback((title: string, body: string) => {
+    const id = crypto.randomUUID();
+    setSnackbars((state) => [...state, { id, title, body }]);
+
+    window.setTimeout(() => {
+      setSnackbars((state) => state.filter((item) => item.id !== id));
+    }, 2600);
+  }, []);
 
   const handleRelayMessage = useCallback(
     (message: AnyRelayToClientMessage) => {
@@ -115,8 +132,10 @@ export function HostPage() {
           break;
         }
         case "remote:event": {
+          if (message.payload.eventType !== "press") return;
           const pad = pads.find((item) => item.id === message.payload.padId);
           if (!pad || !pad.enabled) return;
+          pushSnackbar(`Remote Triggered: ${pad.label}`, describePadActionForNotification(pad, hotkeys));
           void executePad(pad);
           break;
         }
@@ -134,7 +153,7 @@ export function HostPage() {
           break;
       }
     },
-    [executePad, pads, setConnectedDeviceCount, setPairing, setVtsError],
+    [executePad, hotkeys, pads, pushSnackbar, setConnectedDeviceCount, setPairing, setVtsError],
   );
 
   useEffect(() => {
@@ -158,38 +177,63 @@ export function HostPage() {
     });
   }, [pads, pairing, relay]);
 
+  useEffect(() => {
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest(".pad-actions")) return;
+      setOpenPadMenuId(null);
+    };
+
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => window.removeEventListener("pointerdown", onPointerDown);
+  }, []);
+
   async function connectVts() {
     setVtsStatus("connecting");
     setVtsError(undefined);
 
     try {
-      await vts.connect(settings.vtsHost, settings.vtsPort);
+      await activeVtsClient.connect(settings.vtsHost, settings.vtsPort);
       setVtsStatus("connected");
 
-      if (settings.vtsToken) {
-        const restored = await vts.restoreToken(settings.vtsToken);
+      if (!useDevMockVts && settings.vtsToken) {
+        const restored = await activeVtsClient.restoreToken(settings.vtsToken);
         if (!restored) {
           setVtsError("Stored token is invalid. Re-authenticate.");
           return;
         }
       }
 
-      const keys = await vts.listHotkeys();
+      const keys = await activeVtsClient.listHotkeys();
       setHotkeys(keys);
     } catch (error) {
       setVtsStatus("error");
-      setVtsError(error instanceof Error ? error.message : "Unknown connection error");
+      const fallbackError = "Unknown connection error";
+      const errorMessage = error instanceof Error ? error.message : fallbackError;
+      if (canUseDevMockVts) {
+        setVtsError(`${errorMessage} | Dev tip: enable "Mock VTS (development only)" to bypass live VTS while building UI.`);
+        return;
+      }
+      setVtsError(errorMessage);
     }
   }
 
   async function authenticateVts() {
+    if (useDevMockVts) {
+      const keys = await activeVtsClient.listHotkeys();
+      setHotkeys(keys);
+      setVtsStatus("connected");
+      setVtsError(undefined);
+      return;
+    }
+
     try {
-      await vts.authenticate(pluginName, pluginDeveloper);
+      await activeVtsClient.authenticate(pluginName, pluginDeveloper);
       const token = vts.getToken();
       if (token) {
         setSettings({ vtsToken: token });
       }
-      const keys = await vts.listHotkeys();
+      const keys = await activeVtsClient.listHotkeys();
       setHotkeys(keys);
       setVtsStatus("connected");
       setVtsError(undefined);
@@ -339,29 +383,65 @@ export function HostPage() {
     <div className="stack">
       <section className="card stack">
         <strong>VTube Studio</strong>
-        <div className="row">
-          <input
-            value={settings.vtsHost}
-            onChange={(event) => setSettings({ vtsHost: event.target.value })}
-            placeholder="VTS host"
-          />
-          <input
-            value={settings.vtsPort}
-            onChange={(event) => setSettings({ vtsPort: Number(event.target.value) || 8001 })}
-            placeholder="VTS port"
-          />
+        <div className="small">Default is `localhost:8001` unless you changed VTube Studio API settings.</div>
+        {canUseDevMockVts ? (
+          <label className="row modal-checkbox">
+            <input
+              type="checkbox"
+              checked={useDevMockVts}
+              onChange={(event) => setSettings({ devMockVts: event.target.checked })}
+            />
+            Mock VTS (development only)
+          </label>
+        ) : null}
+        {useDevMockVts ? (
+          <div className="small">Mock mode is active. Trigger tests will run without a live VTube Studio connection.</div>
+        ) : (
+          <div className="small">For browser dev mode, run this host dashboard on the same PC where VTube Studio is running.</div>
+        )}
+        {useDevMockVts && vts.isConnected() ? (
+          <div className="small">Live VTS is connected right now, so pad triggers will use real VTS hotkeys.</div>
+        ) : null}
+        <div className="vts-form-grid">
+          <label className="stack">
+            <span className="small">VTS Host</span>
+            <input
+              value={settings.vtsHost}
+              onChange={(event) => setSettings({ vtsHost: event.target.value })}
+              placeholder="localhost"
+              disabled={useDevMockVts}
+            />
+          </label>
+          <label className="stack">
+            <span className="small">VTS Port</span>
+            <input
+              value={settings.vtsPort}
+              onChange={(event) => setSettings({ vtsPort: Number(event.target.value) || 8001 })}
+              placeholder="8001"
+              inputMode="numeric"
+              disabled={useDevMockVts}
+            />
+          </label>
           <button className="primary" onClick={connectVts}>
-            Connect
+            {useDevMockVts ? "Load Mock Hotkeys" : "Connect"}
           </button>
         </div>
-        <div className="row">
-          <input value={pluginName} onChange={(event) => setPluginName(event.target.value)} placeholder="Plugin name" />
-          <input
-            value={pluginDeveloper}
-            onChange={(event) => setPluginDeveloper(event.target.value)}
-            placeholder="Plugin developer"
-          />
-          <button onClick={authenticateVts}>Authenticate</button>
+        <div className="small">Authenticate identifies this app in VTube Studio permission prompt.</div>
+        <div className="vts-form-grid">
+          <label className="stack">
+            <span className="small">Plugin Name</span>
+            <input value={pluginName} onChange={(event) => setPluginName(event.target.value)} placeholder="VPad" disabled={useDevMockVts} />
+          </label>
+          <label className="stack">
+            <span className="small">Plugin Developer</span>
+            <input
+              value={pluginDeveloper}
+              onChange={(event) => setPluginDeveloper(event.target.value)}
+              placeholder="Your name or team"
+              disabled={useDevMockVts}
+            />
+          </label>
+          <button onClick={authenticateVts}>{useDevMockVts ? "Skip Auth (Mock)" : "Authenticate"}</button>
         </div>
         {vtsError ? <div className="small">Error: {vtsError}</div> : null}
       </section>
@@ -389,19 +469,59 @@ export function HostPage() {
         <div className="grid">
           {visiblePads.map((pad) => (
             <div key={pad.id} className="pad-item">
-              <button className="pad" style={{ background: pad.color ?? "#d9e2ec" }} onClick={() => void executePad(pad)}>
-                <span className="pad-label">{pad.label}</span>
-                <span className="pad-meta">{formatActionType(pad.action.type)}</span>
+              <button
+                className={`pad ${pad.enabled ? "pad-enabled" : "pad-disabled"}`}
+                style={{ background: pad.color ?? "#d9e2ec" }}
+                disabled={!pad.enabled}
+                onClick={() => {
+                  setOpenPadMenuId(null);
+                  void executePad(pad);
+                }}
+              >
+                <span className={`pad-label${pad.enabled ? "" : " pad-label-disabled"}`}>{pad.label}</span>
+                <span className={`pad-meta${pad.enabled ? "" : " pad-meta-disabled"}`}>
+                  {formatActionType(pad.action.type)}
+                  {!pad.enabled ? " · Disabled" : ""}
+                </span>
               </button>
-              <div className="pad-actions" role="menu" aria-label={`Actions for ${pad.label}`}>
-                <button className="pad-actions-trigger" type="button" aria-label={`Open menu for ${pad.label}`}>
+              <div
+                className={`pad-actions${openPadMenuId === pad.id ? " open" : ""}`}
+                role="menu"
+                aria-label={`Actions for ${pad.label}`}
+              >
+                <button
+                  className={`pad-actions-trigger${openPadMenuId === pad.id ? " active" : ""}`}
+                  type="button"
+                  aria-label={`Open menu for ${pad.label}`}
+                  aria-expanded={openPadMenuId === pad.id}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setOpenPadMenuId((state) => (state === pad.id ? null : pad.id));
+                  }}
+                >
                   ⋯
                 </button>
                 <div className="pad-actions-menu">
-                  <button type="button" className="pad-menu-item" onClick={() => openEditPadModal(pad.id)}>
+                  <button
+                    type="button"
+                    className="pad-menu-item"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      openEditPadModal(pad.id);
+                      setOpenPadMenuId(null);
+                    }}
+                  >
                     Edit
                   </button>
-                  <button type="button" className="pad-menu-item danger" onClick={() => onDeletePadFromMenu(pad.id)}>
+                  <button
+                    type="button"
+                    className="pad-menu-item danger"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onDeletePadFromMenu(pad.id);
+                      setOpenPadMenuId(null);
+                    }}
+                  >
                     Delete
                   </button>
                 </div>
@@ -502,6 +622,15 @@ export function HostPage() {
           onSubmit={onSubmitPadForm}
         />
       ) : null}
+
+      <div className="snackbar-stack" aria-live="polite" aria-atomic="true">
+        {snackbars.map((item) => (
+          <div key={item.id} className="snackbar-item">
+            <strong>{item.title}</strong>
+            <div className="small">{item.body}</div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -521,6 +650,32 @@ function formatActionType(actionType: TriggerAction["type"]): string {
   if (actionType === "vts_hotkey") return "VTS Hotkey";
   if (actionType === "play_sound") return "Play Sound";
   return "Multi";
+}
+
+function describePadActionForNotification(pad: TriggerPad, hotkeys: Array<{ id: string; name: string }>): string {
+  const action = pad.action;
+
+  switch (action.type) {
+    case "vts_hotkey": {
+      const hotkey = hotkeys.find((item) => item.id === action.hotkeyId);
+      if (hotkey) {
+        return `Action: VTS Hotkey -> ${hotkey.name} (${hotkey.id})`;
+      }
+      return `Action: VTS Hotkey -> ${action.hotkeyId || "Unknown Hotkey"}`;
+    }
+    case "play_sound":
+      return `Action: Play Sound -> ${action.soundId || "Unknown Sound ID"}`;
+    case "multi": {
+      const summary = action.actions
+        .map((multiAction) => {
+          if (multiAction.type === "vts_hotkey") return `hotkey:${multiAction.hotkeyId}`;
+          if (multiAction.type === "play_sound") return `sound:${multiAction.soundId}`;
+          return "multi";
+        })
+        .join(", ");
+      return `Action: Multi -> [${summary || "empty"}]`;
+    }
+  }
 }
 
 function buildRemoteJoinUrl(baseOrigin: string, sessionId: string, token: string, relayUrl: string): string {
@@ -634,10 +789,51 @@ function padActionFromDraft(draft: PadFormDraft): TriggerAction {
 
 function PadEditorModal({ mode, draft, hotkeys, pages, onClose, onSubmit }: PadEditorModalProps) {
   const [localDraft, setLocalDraft] = useState<PadFormDraft>(draft);
+  const actionJsonValid =
+    localDraft.actionType !== "multi" || (() => {
+      try {
+        const parsed = JSON.parse(localDraft.multiJson) as unknown;
+        return Array.isArray(parsed);
+      } catch {
+        return false;
+      }
+    })();
+  const labelValid = localDraft.label.trim().length > 0;
+  const hotkeyValid = true;
+  const soundIdRequired = localDraft.actionType === "play_sound";
+  const soundIdValid = !soundIdRequired || localDraft.soundId.trim().length > 0;
+  const validationMessages: string[] = [];
+
+  if (!labelValid) {
+    validationMessages.push("Enter a button label.");
+  }
+
+  if (soundIdRequired && !soundIdValid) {
+    validationMessages.push("Enter a sound ID.");
+  }
+
+  if (!actionJsonValid) {
+    validationMessages.push("Multi Actions JSON must be a valid array.");
+  }
+
+  const canSubmit =
+    labelValid &&
+    hotkeyValid &&
+    soundIdValid &&
+    actionJsonValid;
 
   useEffect(() => {
     setLocalDraft(draft);
   }, [draft]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -648,15 +844,19 @@ function PadEditorModal({ mode, draft, hotkeys, pages, onClose, onSubmit }: PadE
             Close
           </button>
         </div>
+        <div className="small">Required fields are marked with *</div>
 
         <div className="row modal-grid">
           <label className="stack" style={{ minWidth: 180 }}>
-            <span className="small">Label</span>
+            <span className="small">Label *</span>
             <input
+              className={!labelValid ? "field-invalid" : undefined}
+              aria-invalid={!labelValid}
               value={localDraft.label}
               onChange={(event) => setLocalDraft({ ...localDraft, label: event.target.value })}
               placeholder="Button label"
             />
+            {!labelValid ? <span className="validation-text">Label is required.</span> : null}
           </label>
           <label className="stack" style={{ minWidth: 140 }}>
             <span className="small">Color</span>
@@ -726,30 +926,37 @@ function PadEditorModal({ mode, draft, hotkeys, pages, onClose, onSubmit }: PadE
 
         {localDraft.actionType === "vts_hotkey" ? (
           <label className="stack">
-            <span className="small">VTS Hotkey</span>
+            <span className="small">VTS Hotkey (optional)</span>
             <select
               value={localDraft.hotkeyId}
               onChange={(event) => setLocalDraft({ ...localDraft, hotkeyId: event.target.value })}
             >
-              <option value="">Select hotkey</option>
+              <option value="">Select hotkey (or leave empty)</option>
               {hotkeys.map((hotkey) => (
                 <option key={hotkey.id} value={hotkey.id}>
                   {hotkey.name}
                 </option>
               ))}
             </select>
+            {hotkeys.length === 0 ? (
+              <span className="small">No hotkeys loaded yet. You can still save and select this later.</span>
+            ) : null}
+            {hotkeys.length > 0 && !localDraft.hotkeyId.trim() ? <span className="small">Optional: leave empty for now and assign later.</span> : null}
           </label>
         ) : null}
 
         {localDraft.actionType === "play_sound" ? (
           <div className="row">
             <label className="stack" style={{ minWidth: 220 }}>
-              <span className="small">Sound ID</span>
+              <span className="small">Sound ID *</span>
               <input
+                className={!soundIdValid ? "field-invalid" : undefined}
+                aria-invalid={!soundIdValid}
                 value={localDraft.soundId}
                 onChange={(event) => setLocalDraft({ ...localDraft, soundId: event.target.value })}
                 placeholder="sound_id"
               />
+              {!soundIdValid ? <span className="validation-text">Sound ID is required.</span> : null}
             </label>
             <label className="stack" style={{ minWidth: 140 }}>
               <span className="small">Volume (0-1)</span>
@@ -767,18 +974,23 @@ function PadEditorModal({ mode, draft, hotkeys, pages, onClose, onSubmit }: PadE
           <label className="stack">
             <span className="small">Multi Actions JSON</span>
             <textarea
-              className="modal-textarea"
+              className={`modal-textarea${!actionJsonValid ? " field-invalid" : ""}`}
+              aria-invalid={!actionJsonValid}
               value={localDraft.multiJson}
               onChange={(event) => setLocalDraft({ ...localDraft, multiJson: event.target.value })}
             />
+            {!actionJsonValid ? <span className="validation-text">JSON must be an array of actions.</span> : null}
           </label>
         ) : null}
 
-        <div className="row modal-footer" style={{ justifyContent: "flex-end" }}>
+        <div className="row modal-footer" style={{ justifyContent: "space-between" }}>
+          <div className="stack" style={{ gap: "0.25rem", flex: 1 }}>
+            {!canSubmit ? <span className="validation-text">Can&apos;t save yet: {validationMessages[0]}</span> : <span className="small">All required fields are complete.</span>}
+          </div>
           <button type="button" onClick={onClose}>
             Cancel
           </button>
-          <button className="primary" type="button" onClick={() => onSubmit(localDraft)}>
+          <button className="primary" type="button" onClick={() => onSubmit(localDraft)} disabled={!canSubmit}>
             Save Button
           </button>
         </div>

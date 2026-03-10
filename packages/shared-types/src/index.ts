@@ -54,6 +54,7 @@ export interface Settings extends EntityBase {
   vtsHost: string;
   vtsPort: number;
   vtsToken?: string;
+  devMockVts?: boolean;
 }
 
 export interface RemoteSession extends EntityBase {

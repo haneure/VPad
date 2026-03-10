@@ -20,6 +20,7 @@ const initialSettings: Settings = {
   publicHostOrigin: envPublicHostOrigin || "",
   vtsHost: "localhost",
   vtsPort: 8001,
+  devMockVts: false,
   schemaVersion: SCHEMA_VERSION,
   createdAt: timestamp,
   updatedAt: timestamp,

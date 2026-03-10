@@ -31,6 +31,10 @@ export class WebSocketVtsClient implements VtsClient {
   private authToken?: string;
   private pending = new Map<string, PendingRequest>();
 
+  isConnected(): boolean {
+    return this.ws?.readyState === WebSocket.OPEN;
+  }
+
   async connect(host: string, port: number): Promise<void> {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) return;
 
@@ -169,5 +173,37 @@ export class WebSocketVtsClient implements VtsClient {
 
     this.pending.delete(parsed.requestID);
     pending.resolve(parsed);
+  }
+}
+
+const DEV_MOCK_HOTKEYS: VtsHotkey[] = [
+  { id: "mock_wave", name: "Mock: Wave" },
+  { id: "mock_laugh", name: "Mock: Laugh" },
+  { id: "mock_heart", name: "Mock: Heart Eyes" },
+];
+
+export class MockVtsClient implements VtsClient {
+  async connect(_host: string, _port: number): Promise<void> {
+    return;
+  }
+
+  async disconnect(): Promise<void> {
+    return;
+  }
+
+  async authenticate(_pluginName: string, _pluginDeveloper: string): Promise<void> {
+    return;
+  }
+
+  async restoreToken(_token: string): Promise<boolean> {
+    return true;
+  }
+
+  async listHotkeys(): Promise<VtsHotkey[]> {
+    return DEV_MOCK_HOTKEYS;
+  }
+
+  async triggerHotkey(_hotkeyId: string): Promise<void> {
+    return;
   }
 }
