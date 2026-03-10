@@ -1,0 +1,27 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "VPad",
+  "version": "0.1.0",
+  "identifier": "com.vpad.app",
+  "build": {
+    "beforeDevCommand": "pnpm --filter @vpad/host-web dev",
+    "beforeBuildCommand": "pnpm --filter @vpad/host-web build",
+    "devUrl": "http://localhost:5173",
+    "frontendDist": "../apps/host-web/dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "VPad",
+        "width": 1280,
+        "height": 820,
+        "resizable": true
+      }
+    ]
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": []
+  }
+}
